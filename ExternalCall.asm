@@ -22,16 +22,17 @@ NewExternalStructurePointer EQU ?NewPointer@ExternalStructure@ST@@SIPAV?$TOTE@VO
 extern NewExternalStructurePointer:near32
 NewExternalStructure EQU ?New@ExternalStructure@ST@@SIPAV?$TOTE@VObject@ST@@@@PAV?$TOTE@VBehavior@ST@@@@PAX@Z
 extern NewExternalStructure:near32
-NewStringWithLen EQU ?NewWithLen@String@ST@@SIPAV?$TOTE@VString@ST@@@@PBDI@Z
+NewStringWithLen EQU ?New@?$ByteString@$0A@$0FE@V?$TOTE@VString@ST@@@@@ST@@SIPAV?$TOTE@VString@ST@@@@PIBDI@Z
 extern NewStringWithLen:near32
-NewStringFromWide EQU ?NewFromWide@String@ST@@SIPAV?$TOTE@VString@ST@@@@PB_W@Z
-extern NewStringFromWide:near32
+NewStringFromUtf16 EQU ?New@?$ByteString@$0A@$0FE@V?$TOTE@VString@ST@@@@@ST@@SIPAV?$TOTE@VString@ST@@@@PB_W@Z
+extern NewStringFromUtf16:near32
+NewUtf16String EQU ?New@Utf16String@ST@@SIPAV?$TOTE@VUtf16String@ST@@@@PB_W@Z
+extern NewUtf16String:near32
+NewUtf16StringFromString EQU ?New@Utf16String@ST@@SIPAV?$TOTE@VUtf16String@ST@@@@PAV?$TOTE@VString@ST@@@@@Z
+extern NewUtf16StringFromString:near32
 
-NewBSTR			EQU ?NewBSTR@@YIPAV?$TOTE@VExternalAddress@ST@@@@PBD@Z
+NewBSTR EQU ?NewBSTR@@YIPAV?$TOTE@VExternalAddress@ST@@@@PAV?$TOTE@VObject@ST@@@@@Z
 extern NewBSTR:near32
-
-NewBSTRFromWide	EQU ?NewBSTR@@YIPAV?$TOTE@VExternalAddress@ST@@@@PB_W@Z
-extern NewBSTRFromWide:near32
 
 NewGUID EQU ?NewGUID@@YIPAV?$TOTE@VVariantByteObject@ST@@@@PAU_GUID@@@Z
 extern NewGUID:near32
@@ -40,10 +41,6 @@ NewSigned64 EQU ?NewSigned64@Integer@ST@@SGI_J@Z
 extern NewSigned64:near32
 NewUnsigned64 EQU ?NewUnsigned64@Integer@ST@@SGI_K@Z
 extern NewUnsigned64:near32
-SysFreeString EQU _SysFreeString@4
-extern SysFreeString:near32
-SysAllocString EQU _SysAllocString@4
-extern SysAllocString:near32
 
 REQUESTCOMPLETION EQU ?OnCallReturned@OverlappedCall@@AAEXXZ
 extern REQUESTCOMPLETION:near32
@@ -360,8 +357,7 @@ LoopNext MACRO
 	dec		INDEX									; i--
 	js		performCall								; No more args to push
 
-	xor		TEMP, TEMP
-	mov		TEMPB, ([DESCRIPTOR].m_args[INDEX])		; Load arg type from descriptor
+	movzx	TEMP, ([DESCRIPTOR].m_args[INDEX])		; Load arg type from descriptor
 	mov		ARG, [_SP]
 	sub		_SP, OOPSIZE							; Point at next arg in stack
 	jmp		pushOopTable[TEMP*SIZEOF DWORD]
@@ -484,8 +480,7 @@ retStruct:
 	ASSERTNEQU %DESCRIPTOR, <edx>
 
 	;; Returning a 9+ byte structure by value, so we must make space for it on the stack!
-	xor		ecx, ecx
-	mov		cl, [DESCRIPTOR].m_returnParm			; Get return parm literal frame index into ECX
+	movzx	ecx, [DESCRIPTOR].m_returnParm			; Get return parm literal frame index into ECX
 	
 	; N.B. Before we need the INDEX, we'll use it as a temp
 	mov		edx, [method]							; Load the method (NOT Interpreter::m_pMethod)
@@ -1031,36 +1026,21 @@ extCallArgBSTR:
 	mov		TEMP, [ARG].m_oteClass						; Get class of ARG into TEMP
 	ASSUME	TEMP:PTR OTE
 
-	mov		ARG, [ARG].m_location
-	ASSUME	ARG:PTR ByteArray							; No, its bytes
-
 	.IF (TEMP != [Pointers.ClassBSTR] && TEMP != [Pointers.ClassLargeInteger])
-		.IF (TEMP == [Pointers.ClassString])
-			;lea		ecx, [ARG+HEADERSIZE]						; Get address of LPWSTR into ECX
-			mov		ecx, ARG									; Get address of LPWSTR into ECX
-			call	NewBSTR										; Create new finalizable BSTR
-		.ELSE	
-			cmp		TEMP, [Pointers.ClassUnicodeString]
-			jne		preCallFail
-
-			mov		ecx, ARG									; Get address of LPWSTR into ECX
-			call	NewBSTRFromWide								; Create new finalizable BSTR
-		.ENDIF
-
+		mov			ecx, ARG
+		call		NewBSTR
 		ASSUME	eax:PTR OTE
 
 		;; Now we need some way to ensure this is destroyed, and the easiest way is to stuff
 		;; it on the ST stack in the slot occuppied by the UnicodeString argument
-		mov		[_SP+OOPSIZE], eax								; Replace UnicodeString with BSTR object
+		mov		[_SP+OOPSIZE], eax								; Replace string arg with BSTR object
 		AddToZctNoSP <a>
 
 		mov		eax, [_SP+OOPSIZE]
-		mov		ARG, [eax].m_location
-		
-		; ARG now contains address of bytes
-		ASSUME	ARG:PTR ByteArray
 	.ENDIF
 
+	mov		ARG, [ARG].m_location
+	; ARG now contains address of bytes
 	ASSUME	ARG:PTR ByteArray
 
 	; Load the address out of the object
@@ -1073,6 +1053,45 @@ pushBSTRAddressLoopNext:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
 ExtCallArgLPWSTR:
+	ASSUME	ARG:Oop										; ARG is input Oop from dispatch loop
+
+	test	ARG, 1										; SmallInteger?
+	jnz		preCallFail									; Yes, invalid
+	ASSUME	ARG:PTR OTE									; No, its an object
+
+	test	[ARG].m_flags, MASK m_pointer				; Pointer object?
+	jnz		tryNil										; Yes, nil passes as null, but other Pointer objects invalid
+
+	mov		TEMP, [ARG].m_oteClass						; Get class of ARG into TEMP
+	ASSUME	TEMP:PTR OTE
+
+	test	[ARG].m_flags, MASK m_weakOrZ				; It is a null terminated class?
+	jz		preCallFail									; No, only null terminated objects can be passed as #lpwstr
+
+	cmp		TEMP, [Pointers.ClassUtf16String]
+	jne		@F
+
+	mov		ARG, [ARG].m_location
+
+	; ARG now contains address of wide chars
+	PushLoopNext<ARG>
+
+@@:
+	mov		ecx, ARG
+	call	NewUtf16StringFromString					; Create new Utf16String instance from the byte string using the ANSI or UTF8 code page as appropriate
+	ASSUME	eax:PTR OTE
+
+	;; Now we need some way to ensure this is ref'd and destroyed, and the easiest way is to stuff
+	;; it on the ST stack in the slot occuppied by the byte string argument and add it to the ZCT
+	mov		[_SP+OOPSIZE], eax
+	AddToZctNoSP <a>
+
+	mov		eax, [_SP+OOPSIZE]
+	mov		ARG, [eax].m_location
+	; ARG now contains address of bytes
+	ASSUME	ARG:PTR ByteArray
+	PushLoopNext<ARG>
+
 ExtCallArgLPSTR:
 	ASSUME	ARG:Oop										; ARG is input Oop from dispatch loop
 
@@ -1083,16 +1102,33 @@ ExtCallArgLPSTR:
 	test	[ARG].m_flags, MASK m_pointer				; Pointer object?
 	jnz		tryNil										; Yes, nil passes as null, but other Pointer objects invalid
 
-	test	[ARG].m_flags, MASK m_weakOrZ				; It is a null terminated class?
+	mov		TEMP, [ARG].m_oteClass						; Get class of ARG into TEMP
+	ASSUME	TEMP:PTR OTE
+
+	test	[ARG].m_flags, MASK m_weakOrZ				; It is a null terminated object?
 	jz		preCallFail									; No, only null terminated objects can be passed as #lpstr
 
 	mov		ARG, [ARG].m_location
-	ASSUME	ARG:PTR ByteArray							; No, its bytes
+	ASSUME	ARG:PTR String
 
-;	add		ARG, HEADERSIZE								; Adjust ARG to point at the contents (skip header)
-	ASSUME	ARG:PTR BYTE
+	cmp		TEMP, [Pointers.ClassUtf16String]			; If its a wide string it will need conversion. We assume the API is expecting an ANSI string
+	je		@F
 
-	PushLoopNext <ARG>									; Yes, then push that pointer
+	PushLoopNext <ARG>									; ByteString of some sort, just push that pointer. Note we assume encoding is as expected
+
+@@:
+	mov		ecx, ARG
+	call	NewStringFromUtf16							; Assume its an ANSI API and will not understand Utf8 (which is generally true of byte string APIs on Windows, unfortunately)
+	ASSUME	ARG:PTR OTE
+
+	mov		[_SP+OOPSIZE], eax
+	AddToZctNoSP <a>
+
+	mov		eax, [_SP+OOPSIZE]
+	mov		ARG, [eax].m_location
+	ASSUME	ARG:PTR String
+	PushLoopNext<ARG>
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
 tryNil:
@@ -1864,7 +1900,7 @@ extCallRetLPWSTR:
 	jz		returnNil
 
 	mov		ecx, RESULT
-	call	NewStringFromWide
+	call	NewUtf16String
 	AnswerObjectResult
 
 extCallRetLPSTR:

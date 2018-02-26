@@ -254,6 +254,14 @@ primitiveNextPutAll EQU ?primitiveNextPutAll@Interpreter@@CIPAIQAI@Z
 extern primitiveNextPutAll:near32
 primitiveAtEnd EQU ?primitiveAtEnd@Interpreter@@CIPAIQAI@Z
 extern primitiveAtEnd:near32
+primitiveBasicAt EQU ?primitiveBasicAt@Interpreter@@CIPAIQAI@Z
+extern primitiveBasicAt:near32
+primitiveBasicAtPut EQU ?primitiveBasicAtPut@Interpreter@@CIPAIQAI@Z
+extern primitiveBasicAtPut:near32
+primitiveInstVarAt EQU ?primitiveInstVarAt@Interpreter@@CIPAIQAI@Z
+extern primitiveInstVarAt:near32
+primitiveInstVarAtPut EQU ?primitiveInstVarAtPut@Interpreter@@CIPAIQAI@Z
+extern primitiveInstVarAtPut:near32
 
 primitiveValueWithArgs EQU ?primitiveValueWithArgs@Interpreter@@CIPAIQAI@Z
 extern primitiveValueWithArgs:near32
@@ -406,11 +414,8 @@ extern QUEUEINTERRUPT:near32
 ONEWAYBECOME EQU ?oneWayBecome@ObjectMemory@@SIXPAV?$TOTE@VObject@ST@@@@0@Z
 extern ONEWAYBECOME:near32
 
-OOPSUSED EQU ?OopsUsed@ObjectMemory@@SIHXZ
-extern OOPSUSED:near32
-
-YIELD EQU ?yield@Interpreter@@CIHXZ
-extern YIELD:near32												; See process.cpp
+primitiveYield EQU ?primitiveYield@Interpreter@@CIPAIXZ
+extern primitiveYield:near32												; See process.cpp
 
 primitiveStringSearch EQU ?primitiveStringSearch@Interpreter@@CIPAIQAI@Z
 extern primitiveStringSearch:near32
@@ -427,6 +432,12 @@ primitiveStringCmp EQU ?primitiveStringCmp@Interpreter@@CIPAIQAI@Z
 extern primitiveStringCmp:near32
 primitiveBytesEqual EQU ?primitiveBytesEqual@Interpreter@@CIPAIQAI@Z
 extern primitiveBytesEqual:near32
+primitiveStringAsUtf16String EQU ?primitiveStringAsUtf16String@Interpreter@@CIPAIQAI@Z
+extern primitiveStringAsUtf16String:near32
+primitiveStringAsUtf8String EQU ?primitiveStringAsUtf8String@Interpreter@@CIPAIQAI@Z
+extern primitiveStringAsUtf8String:near32
+primitiveStringAsAnsiString EQU ?primitiveStringAsAnsiString@Interpreter@@CIPAIQAI@Z
+extern primitiveStringAsAnsiString:near32
 
 ; Note this function returns 'bool', i.e. single byte in al; doesn't necessarily set whole of eax
 DISABLEINTERRUPTS EQU ?disableInterrupts@Interpreter@@SI_N_N@Z
@@ -449,6 +460,14 @@ primitiveHashBytes EQU ?primitiveHashBytes@Interpreter@@CIPAIQAI@Z
 extern primitiveHashBytes:near32
 primitiveLookupMethod EQU ?primitiveLookupMethod@Interpreter@@CIPAIQAI@Z
 extern primitiveLookupMethod:near32
+primitiveObjectCount EQU ?primitiveObjectCount@Interpreter@@CIPAIQAI@Z
+extern primitiveObjectCount:near32
+primitiveExtraInstanceSpec EQU ?primitiveExtraInstanceSpec@Interpreter@@CIPAIQAI@Z
+extern primitiveExtraInstanceSpec:near32
+primitiveExtraInstanceSpec EQU ?primitiveExtraInstanceSpec@Interpreter@@CIPAIQAI@Z
+extern primitiveExtraInstanceSpec:near32
+primitiveSetSpecialBehavior EQU ?primitiveSetSpecialBehavior@Interpreter@@CIPAIQAI@Z
+extern primitiveSetSpecialBehavior:near32
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Constants
@@ -614,7 +633,7 @@ DWORD		primitiveLowBit									; case 152
 DWORD		primitiveAllReferences							; case 153
 DWORD		primitiveOneWayBecome							; case 154
 DWORD		primitiveShallowCopy							; case 155
-DWORD		primitiveYield									; case 156
+DWORD		primitiveYieldThunk								; case 156
 DWORD		primitiveNewInitializedObject					; case 157
 DWORD		primitiveSmallIntegerAt							; case 158
 DWORD		primitiveLongDoubleAt							; case 159
@@ -673,9 +692,9 @@ DWORD		primitiveFloatClassify							; case 211
 DWORD		primitiveFloatFractionPart						; case 212
 DWORD		primitiveFloatIntegerPart						; case 213
 DWORD		primitiveFloatLE								; case 214
-DWORD		unusedPrimitive									; case 215
-DWORD		unusedPrimitive									; case 216
-DWORD		unusedPrimitive									; case 217
+DWORD		primitiveStringAsUtf16String					; case 215
+DWORD		primitiveStringAsUtf8String						; case 216
+DWORD		primitiveStringAsAnsiString						; case 217
 DWORD		unusedPrimitive									; case 218
 DWORD		unusedPrimitive									; case 219
 DWORD		unusedPrimitive									; case 220
@@ -726,352 +745,6 @@ ENDIF
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; System Primitives
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; String/variable byte objects primitives
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;
-;;  BOOL __fastcall Interpreter::primitiveBasicAt()
-;;
-;; Primitive for getting elements of indexed objects
-;;
-;; The receiver MUST not be a SmallInteger, or a crash will result when attempting
-;; the line marked with a '*'
-;;
-BEGINPRIMITIVE primitiveBasicAt
-	mov		ecx, [_SP-OOPSIZE]					; Access receiver under argument
-	mov		edx, [_SP]							; Load argument from stack
-   	ASSUME	ecx:PTR OTE							; ecx is pointer to receiver for rest of primitive
-
-	sar		edx, 1								; Argument is a SmallInteger?
-	jnc		localPrimitiveFailure0				; Arg not a SmallInteger, primitive failure 0
-	jle		localPrimitiveFailure1
-
-	mov		eax, [ecx].m_oteClass				; Get class Oop from OTE into EAX for later use
-	ASSUME	eax:PTR OTE
-
-	test	[ecx].m_flags, MASK m_pointer		; Test pointer bit of object table entry
-	jz		byteObjectAt						; Contains bytes? Yes, skip to byte access code
-
-pointerAt:
-	; ASSUME ecx:PTR OTE						; ECX is receiver Oop
-	; ASSUME eax:PTR OTE						; EAX is class Oop
-	; ASSUEM edx:DWORD							; EDX is offset
-
-	; Array of pointers?
-
-	mov		ecx, [ecx].m_size					; Load size into ecx (not overwriting receiver Oop)
-	ASSUME	ecx:DWORD
-
-	mov		eax, [eax].m_location				; Load address of class object into eax from OTE at eax
-	ASSUME	eax:PTR Behavior
-	
-	and		ecx, 7fffffffh						; Mask out the immutability bit
-	shr		ecx, 2								; ecx = total Oop size
-	
-	mov		eax, [eax].m_instanceSpec			; Load Instancespecification into edx
-	ASSUME	eax:DWORD
-
-	and		eax, MASK m_fixedFields				; Mask off flags
-	shr		eax, 1								; Convert from SmallInteger
-	add		edx, eax							; Add fixed offset for inst vars
-
-	cmp		edx, ecx							; Index <= size (still in ecx)?
-
-	mov		ecx, [_SP-OOPSIZE]					; Reload receiver into ecx
-	ASSUME 	ecx:PTR OTE
-
-	ja		localPrimitiveFailure1				; No, out of bounds
-
-	mov		eax, [ecx].m_location				; Reload address of receiver into eax
-	
-	mov		eax, [eax+edx*OOPSIZE-OOPSIZE]		; Load Oop of element at required index
-	mov		[_SP-OOPSIZE], eax					; And overwrite receiver in stack with it
-	lea		eax, [_SP-OOPSIZE]					; primitiveSuccess(1)
-
-	ret
-	
-byteObjectAt:
-	ASSUME	ecx:PTR OTE							; ECX is Oop of receiver, but not needed
-	ASSUME	edx:DWORD							; EDX is the index
-	ASSUME	eax:PTR OTE							; EAX is the Oop of the receiver's class
-
-	mov		eax, [ecx].m_location				; Load object address into eax
-	ASSUME	eax:PTR ByteArray					; EAX points at receiver
-
-	mov		ecx, [ecx].m_size					
-	and		ecx, 7fffffffh						; Mask out the immutability bit
-	
-	cmp		edx, ecx							; Index out of bounds (>= size) ?
-	ja		localPrimitiveFailure1				; 
-	
-	movzx	ecx, BYTE PTR[eax+edx-1]			; Load required byte, zero extending
-
-	lea		eax, [_SP-OOPSIZE]					; primitiveSuccess(1)
-	lea		ecx, [ecx+ecx+1]					; Convert to SmallInteger
-	mov		[_SP-OOPSIZE], ecx					; Overwrite receiver with result. 
-	ret
-
-LocalPrimitiveFailure 0
-LocalPrimitiveFailure 1
-
-ENDPRIMITIVE primitiveBasicAt
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;
-;; BOOL __fastcall Interpreter::primitiveInstVarAt()
-;;
-;; Primitive for getting elements of objects
-;;
-BEGINPRIMITIVE primitiveInstVarAt
-	mov		ecx, [_SP-OOPSIZE]					; Access receiver under argument
-	mov		edx, [_SP]							; Load argument from stack
-	sar		edx, 1								; Argument is a SmallInteger?
-   	ASSUME	ecx:PTR OTE							; ecx is pointer to receiver for rest of primitive
-	jnc		localPrimitiveFailure0				; Arg not a SmallInteger, primitive failure 0
-	jle		localPrimitiveFailure1				; Arg <= 0?
-
-	mov		eax, [ecx].m_location				; Load object address into eax *Will fail if receiver is SmallInteger*
-	ASSUME	eax:PTR VariantObject
-				     	
-	test	[ecx].m_flags, MASK m_pointer		; Test pointer bit of object table entry
-	jz		byteObjectAt						; Contains pointers? No, skip to byte access code
-
-	; Array of pointers?
-	mov		ecx, [ecx].m_size					; Load byte size into ECX
-	and		ecx, 7fffffffh						; Mask out immutability (sign) bit
-	shr		ecx, 2								; Div 4 gives pointer count
-	cmp		edx, ecx							; index <= size?
-	ja		localPrimitiveFailure1				; No, out of bounds (>=)
-
-	mov		ecx, [eax].m_elements[edx*OOPSIZE-OOPSIZE]	; Load Oop from inst var
-	lea		eax, [_SP-OOPSIZE]					; primitiveSuccess(1)
-	mov		[_SP-OOPSIZE], ecx					; Overwrite receiver with inst var value
-
-	ret
-
-byteObjectAt:
-	ASSUME	ecx:PTR OTE							; ECX is Oop of receiver, but not needed
-	ASSUME	edx:DWORD							; EDX is the index
-	ASSUME	eax:PTR OTE							; EAX is the Oop of the receiver's class
-
-	mov		eax, [ecx].m_location				; Load object address into eax
-	ASSUME	eax:PTR ByteArray					; EAX points at receiver
-
-	mov		ecx, [ecx].m_size					
-	and		ecx, 7fffffffh						; Mask out the immutability bit
-	
-	cmp		edx, ecx							; Index out of bounds (> size) ?
-	ja		localPrimitiveFailure1				; 
-	
-	movzx	ecx, BYTE PTR[eax+edx-1]			; Load required byte, zero extending
-
-	lea		eax, [_SP-OOPSIZE]					; primitiveSuccess(1)
-	lea		ecx, [ecx+ecx+1]					; Convert to SmallInteger
-	mov		[_SP-OOPSIZE], ecx					; Overwrite receiver with result. 
-	ret
-
-LocalPrimitiveFailure 0
-LocalPrimitiveFailure 1
-
-ENDPRIMITIVE primitiveInstVarAt
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;
-;;	BOOL __fastcall Interpreter::primitiveBasicAtPut()
-;;
-;; Primitive for setting elements of indexed objects without using cache
-;; This primitive answers its value argument, so it moves it down
-;; the stack, overwriting the receiver. The other argument must be a
-;; SmallInteger for the primitive to succeed.
-;;
-BEGINPRIMITIVE primitiveBasicAtPut
-	mov		ecx, [_SP-OOPSIZE*2]				; Access receiver under arguments
-	mov		edx, [_SP-OOPSIZE]					; Load index argument from stack
-	ASSUME	ecx:PTR OTE
-
-	sar		edx, 1								; Argument is a SmallInteger?
-	jnc		localPrimitiveFailure0 				; No, primitive failure
-	jle		localPrimitiveFailure1				; Index <= 0?
-
-	test	[ecx].m_flags, MASK m_pointer		; Pointer object?
-	jz		byteObjectAtPut						; No, skip to code for storing bytes
-
-	mov		eax, [ecx].m_oteClass				; Get class Oop	from OTE into eax
-	ASSUME	eax:PTR OTE
-	
-	mov		ecx, [ecx].m_size					; Load size into ecx (negative if immutable)
-	ASSUME	ecx:SDWORD
-	sar		ecx, 2								; ecx = total Oop size
-
-	mov		eax, [eax].m_location				; Load address of class object into eax
-	ASSUME	eax:PTR Behavior
-
-	mov		eax, [eax].m_instanceSpec			; Load Instancespecification flags into edx
-	ASSUME	eax:DWORD
-
-	and		eax, MASK m_fixedFields				; Mask off flags
-	shr		eax, 1								; Convert from SmallInteger
-	add		edx, eax							; Add fixed offset for inst vars to offset argument
-
-	mov		eax, [_SP-OOPSIZE*2]				; Reload receiver under arguments
-	ASSUME	eax:PTR OTE
-
-	cmp		edx, ecx							; Index <= size (still in ecx)?
-
-	mov		eax, [eax].m_location				; Reload address of receiver into eax
-	ASSUME	eax:PTR VariantObject
-	
-	jg		localPrimitiveFailure1				; No, out of bounds
-		
-	lea		eax, [eax+edx*OOPSIZE-OOPSIZE]	
-
-	mov		edx, [_SP]							; Reload value to write
-	ASSUME	edx:PTR OTE
-
-	; We must inc ref. count, as we are storing into a heap allocated object here
-	CountUpOopIn <d>
-
-	; Exchange Oop of overwritten value with new value
-	mov		ecx, [eax]				 			; Load value to overwrite into ECX
-	mov		[eax], edx							; and overwrite with new value in edx
-
-	; Must count down overwritten value, as it was in a heap object slot
-	CountDownOopIn <c>		
-
-	; count down destroys eax, ecx, and edx
-
-	mov		eax, [_SP]							; Reload new value into eax again
-	mov		[_SP-OOPSIZE*2], eax				; And overwrite receiver in stack with new value
-
-	lea		eax, [_SP-OOPSIZE*2]				; primitiveSuccess(2)
-	ret
-
-byteObjectAtPut:
-	ASSUME	ecx:PTR OTE						; ECX is byte object Oop
-	ASSUME	edx:DWORD						; EDX is index
-
-	mov		eax, [ecx].m_location			; Load object address into eax
-	ASSUME	eax:PTR ByteArray				; EAX is pointer to byte object
-
-	cmp		edx, [ecx].m_size				; Compare index+HEADERSIZE with object size (latter -ve if immutable)
-	jg		localPrimitiveFailure1			; Index out of bounds (>= size)
-
-	mov		ecx, [_SP]						; Load value to store/return
-
-	add		eax, edx
-	ASSUME	eax:PTR BYTE
-	ASSUME	edx:NOTHING						; EDX is now free
-
-	mov		edx, ecx
-	ASSUME	ecx:DWORD
-	sar		ecx, 1							; Convert to real integer value
-	jnc		localPrimitiveFailure2			; Not a SmallInteger
-
-	cmp		ecx, 0FFh						; Too large?
-	ja		localPrimitiveFailure2			; Used unsigned comparison for 0<=ecx<=255
-
-	mov		[eax-1], cl						; Store byte into receiver
-	ASSUME	eax:NOTHING
-
-	lea		eax, [_SP-OOPSIZE*2]			; primitiveSuccess(2)
-	mov		[_SP-OOPSIZE*2], edx			; ...and overwrite with value for return (still in EAX)
-
-	ret
-
-LocalPrimitiveFailure 0
-LocalPrimitiveFailure 1
-LocalPrimitiveFailure 2
-
-ENDPRIMITIVE primitiveBasicAtPut
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;
-;;	BOOL __fastcall Interpreter::primitiveInstVarAtPut()
-;;
-;; Primitive for setting elements of any object
-;;
-BEGINPRIMITIVE primitiveInstVarAtPut
-	mov		edx, [_SP-OOPSIZE]					; Load index argument from stack
-	mov		ecx, [_SP-OOPSIZE*2]				; Access receiver under arguments
-	ASSUME	ecx:PTR OTE
-
-	sar		edx, 1								; Argument is a SmallInteger?
-	jnc		localPrimitiveFailure0				; No, primitive failure
-	jle		localPrimitiveFailure1
-
-	mov		eax, [ecx].m_location				; Load object address into eax
-
-	test	[ecx].m_flags, MASK m_pointer
-	jz		byteObjectAtPut						; Skip to code for storing bytes
-
-	; Array of pointers
-	ASSUME	eax:PTR VariantObject
-
-	mov		ecx, [ecx].m_size					; Load size into ecx (-ve if immutable)
-	sar		ecx, 2								; ecx = total Oop size
-
-	cmp		edx, ecx							; Index <= size (still in ecx)?
-	jg		localPrimitiveFailure1				; No, out of bounds
-	
-	lea		eax, [eax].m_elements[edx*OOPSIZE-OOPSIZE]
-
-	mov		edx, [_SP]							; Load value to write
-	mov		ecx, [eax]							; Exchange Oop of overwritten value with new value
-	mov		[eax], edx
-	ASSUME	eax:NOTHING
-	CountDownOopIn <c>							; Count down overwritten value
-
-	; count down destroys eax, ecx, and edx
-	mov		ecx, [_SP-OOPSIZE*2]				; Reload receiver
-	mov		eax, [_SP]							; Reload new value into eax
-	mov		[_SP-OOPSIZE*2], eax				; And overwrite receiver in stack with new value
-
-	; Must count up arg, because written into a heap object
-	CountUpOopIn <a>
-
-	lea		eax, [_SP-OOPSIZE*2]				; primitiveSuccess(2)
-	ret
-
-byteObjectAtPut:
-	ASSUME	ecx:PTR OTE						; ECX is byte object Oop
-	ASSUME	edx:DWORD						; EDX is index
-	ASSUME	eax:PTR ByteArray				; EAX is point to byte object
-
-	cmp		edx, [ecx].m_size				; Compare offset+HEADERSIZE with object size (latter -ve if immutable)
-	jg		localPrimitiveFailure1			; Index out of bounds (>= size)
-
-	mov		ecx, [_SP]						; Load value to store from stack top
-	ASSUME	ecx:DWORD
-
-	add		eax, edx
-	ASSUME	eax:PTR BYTE
-
-	mov		edx, ecx						; EDX is now free, so store return value for later
-	ASSUME	edx:DWORD
-
-	sar		ecx, 1							; Convert value to real integer value
-	jnc		localPrimitiveFailure2			; Not a SmallInteger
-
-	cmp		ecx, 0FFh						; Too large?
-	ja		localPrimitiveFailure2			; Used unsigned comparison for 0<=ecx<=255
-
-	mov		[eax-1], cl						; Store byte into receiver
-	ASSUME	eax:NOTHING
-
-	lea		eax, [_SP-OOPSIZE*2]			; primitiveSuccess(2)
-	mov		[_SP-OOPSIZE*2], edx			; ...and overwrite with value for return (still in EAX)
-
-	ret
-
-LocalPrimitiveFailure 0
-LocalPrimitiveFailure 1
-LocalPrimitiveFailure 2
-
-ENDPRIMITIVE primitiveInstVarAtPut
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Raise a special exception caught by the callback entry point routine - the result will still be on top
@@ -1324,77 +997,6 @@ BEGINPRIMITIVE primitiveValueOnUnwind
 LocalPrimitiveFailure 0
 
 ENDPRIMITIVE primitiveValueOnUnwind
-
-
-;  BOOL __fastcall Interpreter::primitiveObjectCount()
-;
-BEGINPRIMITIVE primitiveObjectCount
-	call	OOPSUSED
-	lea		ecx, [eax+eax+1]				; Convert result to SmallInteger
-	mov		eax, _SP						; primitiveSuccess(0)
-	mov		[_SP], ecx						; Overwrite receiver class with new object
-	ret
-ENDPRIMITIVE primitiveObjectCount
-
-BEGINPRIMITIVE primitiveExtraInstanceSpec
-	mov		ecx, [_SP]						; Load receiver class at stack top
-	mov		edx, (OTE PTR[ecx]).m_location
-	ASSUME	edx:PTR Behavior
-
-	mov		ecx, [edx].m_instanceSpec
-	shr		ecx, 15							; Shift to get the high 16 bits
-	or		ecx, 1							; Set SmallInteger flag
-	mov		eax, _SP						; primitiveSuccess(0)
-	mov		[_SP], ecx						; Overwrite receiver class with new object (receiver's ref. count remains same)
-	ret
-ENDPRIMITIVE primitiveExtraInstanceSpec
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Set the special behavior bits of an object according to the mask
-; Takes a SmallInteger argument, of which only the low order word is significant.
-; The high order byte of the low order word specifies the AND mask, used to mask out bits,
-; The low order byte of the low order word specifies the OR mask, used to mask in bits.
-; The current value of the special behavior bits is then answered.
-; The primitive ensures that the current values of bits which may affect the stability of the
-; system cannot be modified.
-; To query the current value of the special bits, pass in 16rFF00.
-BEGINPRIMITIVE primitiveSetSpecialBehavior
-	mov		edx, [_SP]							; Load integer mask argument
-	sar		edx, 1								; Get the integer value
-	jnc		localPrimitiveFailure0						; Not a SmallInteger
-	
-	; No other failures after this point
-	mov		ecx, [_SP-OOPSIZE]					; Load Oop of receiver
-	
-	test	cl, 1
-	jnz		localPrimitiveFailure1				; SmallIntegers can't have special behavior
-	ASSUME ecx:PTR OTE							; ECX is now an Oop
-
-	; Ensure the masks cannot affect the critical bits of the flags
-	; dh, the AND mask, must have the pointer, mark, and free bits set, to keep these bits
-	; dl, the OR mask, must have those bits reset so as not to add them
-	or		dh, (MASK m_pointer OR MASK m_mark OR MASK m_free OR MASK m_space)
-	and		dl, NOT (MASK m_pointer OR MASK m_mark OR MASK m_free OR MASK m_space)
-
-	xor		eax, eax
-	mov		al, [ecx].m_flags
-	push	eax									; Save for later
-	and		al, dh								; Mask out the desired bits
-	or		al, dl								; Mask in the desired bits
-	mov		[ecx].m_flags, al
-	ASSUME	ecx:NOTHING
-	pop		ecx
-	lea		eax, [_SP-OOPSIZE]					; primitiveSuccess(1)
-	lea		ecx, [ecx+ecx+1]					; Convert old mask to SmallInteger
-	mov		[_SP-OOPSIZE], ecx					; Store old mask as return value
-
-	ret
-
-LocalPrimitiveFailure 0
-LocalPrimitiveFailure 1
-
-ENDPRIMITIVE primitiveSetSpecialBehavior
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;  BOOL __fastcall Interpreter::primitiveChangeBehavior()
@@ -1660,16 +1262,6 @@ BEGINPRIMITIVE primitiveEnableInterrupts
 LocalPrimitiveFailure 0
 
 ENDPRIMITIVE primitiveEnableInterrupts
-
-BEGINPRIMITIVE primitiveYield
-	call	YIELD
-	
-	mov		eax, [STACKPOINTER]					; primitiveSuccess(0)
-	mov		_IP, [INSTRUCTIONPOINTER]
-	mov		_BP, [BASEPOINTER]
-
-	ret
-ENDPRIMITIVE primitiveYield
 
 BEGINPRIMITIVE primitiveStructureIsNull
 	mov		ecx, [_SP]								; Access argument
@@ -1942,6 +1534,10 @@ ENDPRIMITIVE primitiveSignalThunk
 BEGINPRIMITIVE primitiveSingleStepThunk
 	CallContextPrim	<PRIMITIVESINGLESTEP>
 ENDPRIMITIVE primitiveSingleStepThunk
+
+BEGINPRIMITIVE primitiveYieldThunk
+	CallContextPrim	<primitiveYield>
+ENDPRIMITIVE primitiveYieldThunk
 
 BEGINPRIMITIVE primitiveResumeThunk
 	CallContextPrim	<PRIMITIVERESUME>

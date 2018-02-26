@@ -212,8 +212,23 @@ public:
 	static SMALLUNSIGNED indexOfSP(Oop* sp);
 
 	// Method lookup
+
+	__declspec(align(16)) struct MethodCacheEntry
+	{
+		// Note that the method cache must include the class, as if one tests against
+		// the method's methodClass inherited methods will always result in a cache miss
+		// (e.g. for #new:, which is deeply inherited by many classes such as Array)
+		// The selector, on the other hand, can be tested against in the method itself.
+		const SymbolOTE*	selector;
+		const BehaviorOTE* 	classPointer;
+		MethodOTE* 			method;
+		intptr_t			primAddress;
+	};
+
+	static MethodCacheEntry* __fastcall findNewMethodInClass(BehaviorOTE* classPointer, const unsigned argCount);
+	static MethodCacheEntry* __stdcall findNewMethodInClassNoCache(BehaviorOTE* classPointer, const unsigned argCount);
 	static MethodOTE* __fastcall lookupMethod(BehaviorOTE* aClass, SymbolOTE* selector);
-	static MethodOTE* __fastcall messageNotUnderstood(BehaviorOTE* aClass, const unsigned argCount);
+	static MethodCacheEntry* __fastcall messageNotUnderstood(BehaviorOTE* aClass, const unsigned argCount);
 	static void __fastcall createActualMessage(const unsigned argCount);
 
 	//Misc
@@ -316,8 +331,6 @@ private:
 	static void sendSelectorToClass(BehaviorOTE* classPointer, unsigned argCount);
 	static void sendVMInterrupt(ProcessOTE* processPointer, Oop nInterrupt, Oop argPointer);
 	static void __fastcall sendVMInterrupt(Oop nInterrupt, Oop argPointer);
-	static MethodOTE* __fastcall findNewMethodInClass(BehaviorOTE* classPointer, const unsigned argCount);
-	static MethodOTE* __stdcall findNewMethodInClassNoCache(BehaviorOTE* classPointer, const unsigned argCount);
 
 	static BOOL __stdcall MsgSendPoll();
 	static BOOL	__stdcall BytecodePoll();
@@ -419,7 +432,6 @@ private:
 	static ProcessOTE* wakeHighestPriority();
 	static ProcessOTE* resumeFirst(LinkedList* list);
 	static ProcessOTE* resumeFirst(Semaphore* sem);
-	static BOOL __fastcall yield();
 	static BOOL	__fastcall FireAsyncEvents();
 	static BOOL __fastcall CheckProcessSwitch();
 	static void switchTo(ProcessOTE* processPointer);
@@ -554,6 +566,9 @@ private:
 	static Oop* __fastcall primitiveSize(Oop* const sp);
    	
 	// Object Indexing Primitives
+	static Oop* __fastcall primitiveBasicAt(Oop* const sp);
+	static Oop* __fastcall primitiveBasicAtPut(Oop* const sp);
+	static Oop* __fastcall primitiveAt(Oop* const sp);
 	static Oop* __fastcall primitiveAtPut(Oop* const sp);
 	static Oop* __fastcall primitiveInstVarAt(Oop* const sp);
 	static Oop* __fastcall primitiveInstVarAtPut(Oop* const sp);
@@ -621,7 +636,10 @@ private:
 	static Oop* __fastcall primitiveStringCmp(Oop* const sp);
 	static Oop* __fastcall primitiveBytesEqual(Oop* const sp);
 
-	
+	static Oop* __fastcall Interpreter::primitiveStringAsUtf16String(Oop* const sp);
+	static Oop* __fastcall Interpreter::primitiveStringAsUtf8String(Oop* const sp);
+	static Oop* __fastcall Interpreter::primitiveStringAsAnsiString(Oop* const sp);
+
 	// Stream Primitives
 	static Oop* __fastcall primitiveNext(Oop* const sp);
 	static Oop* __fastcall primitiveNextSDWORD(Oop* const sp);
@@ -630,6 +648,7 @@ private:
 	static Oop* __fastcall primitiveAtEnd(Oop* const sp);
 
 	// Storage Management Primitives
+	static Oop* __fastcall primitiveObjectCount(Oop* const sp);
 	static Oop* __fastcall primitiveNew(Oop* const sp);
 	static Oop* __fastcall primitiveNewWithArg(Oop* const sp);
 	static Oop* __fastcall primitiveNewPinned(Oop* const sp);
@@ -664,6 +683,7 @@ private:
 	static Oop* __fastcall primitiveSignal(Oop* const sp);
 	static Oop* __fastcall primitiveWait(Oop* const sp);
 	static Oop* __fastcall primitiveResume(Oop* const sp, unsigned argumentCount);
+	static Oop* __fastcall primitiveYield();
 	static Oop* __fastcall primitiveSingleStep(Oop* const sp, unsigned argumentCount);
 	static Oop* __fastcall primitiveSuspend(Oop* const sp);
 	static Oop* __fastcall primitiveSetSignals(Oop* const sp);
@@ -692,6 +712,7 @@ private:
 	static Oop* __fastcall primitiveShallowCopy(Oop* const sp);
 	static Oop* __fastcall primitiveSetSpecialBehavior(Oop* const sp);
 	static Oop* __fastcall primitiveQueueInterrupt(Oop* const sp);
+	static Oop* __fastcall primitiveExtraInstanceSpec(Oop* const sp);
 
 	static Oop* __fastcall primitiveDeQBereavement(Oop* const sp);
 	static Oop* __fastcall primitiveLookupMethod(Oop* const sp);
@@ -740,18 +761,6 @@ private:
 	// Method cache is a hash table with overwrite on collision
 	// If changing method cache size, then must also modify METHODCACHEWORDS in ISTASM.INC!
 	enum { MethodCacheSize = 1024 };
-	__declspec(align(16)) struct MethodCacheEntry 
-	{
-		// Note that the method cache must include the class, as if one tests against
-		// the method's methodClass inherited methods will always result in a cache miss
-		// (e.g. for #new:, which is deeply inherited by many classes such as Array)
-		// The selector, on the other hand, can be tested against in the method itself.
-		const SymbolOTE*	selector;
-		const BehaviorOTE* 	classPointer;
-		MethodOTE* 			method;
-		intptr_t			primAddress;
-	};
-
 	static MethodCacheEntry methodCache[MethodCacheSize];
 
 	static void flushCaches();

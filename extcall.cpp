@@ -119,15 +119,15 @@ OTE* __fastcall ExternalStructure::New(BehaviorOTE* classPointer, void* ptr)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Answer a new BSTR from the specified unicode string
+// Answer a new BSTR from the specified UTF16 string
 
-AddressOTE* __fastcall NewBSTR(LPCWSTR szContents)
+AddressOTE* __fastcall NewBSTR(WCHAR* pChars, size_t len)
 {
 	AddressOTE* resultPointer = reinterpret_cast<AddressOTE*>(ObjectMemory::newUninitializedByteObject(Pointers.ClassBSTR, sizeof(BYTE*)));
 	ExternalAddress* extAddress = resultPointer->m_location;
-	if (*szContents)
+	if (len > 0)
 	{
-		extAddress->m_pointer = reinterpret_cast<BYTE*>(::SysAllocString(szContents));
+		extAddress->m_pointer = reinterpret_cast<BYTE*>(::SysAllocStringLen(pChars, len));
 		resultPointer->beFinalizable();
 	}
 	else
@@ -135,20 +135,32 @@ AddressOTE* __fastcall NewBSTR(LPCWSTR szContents)
 	return resultPointer;
 }
 
-AddressOTE* __fastcall NewBSTR(LPCSTR szContents)
+// Answer a new BSTR converted from the a byte string with the specified encoding
+template <UINT CP> static AddressOTE* __fastcall NewBSTR(const char* szContents, size_t len)
 {
-	AddressOTE* resultPointer = reinterpret_cast<AddressOTE*>(ObjectMemory::newUninitializedByteObject(Pointers.ClassBSTR, sizeof(BYTE*)));
-	ExternalAddress* extAddress = resultPointer->m_location;
-	if (*szContents)
-	{
-		BSTR bsContents = A2WBSTR(szContents);
-		extAddress->m_pointer = reinterpret_cast<BYTE*>(bsContents);
-		resultPointer->beFinalizable();
-	}
-	else
-		extAddress->m_pointer = 0;
+	Utf16StringOTE* utf16 = Utf16String::New<CP>(szContents, len);
+	AddressOTE* answer = NewBSTR(utf16->m_location->m_characters, utf16->getSize() / sizeof(WCHAR));
+	ObjectMemory::deallocateByteObject((OTE*)utf16);
+	return answer;
+}
 
-	return resultPointer;
+AddressOTE* __fastcall NewBSTR(OTE* oteString)
+{
+	BehaviorOTE* oteClass = oteString->m_oteClass;
+	if (oteClass == Pointers.ClassUtf16String)
+	{
+		return NewBSTR(reinterpret_cast<Utf16StringOTE*>(oteString)->m_location->m_characters, oteString->getSize()/sizeof(WCHAR));
+	}
+	else if (oteClass == Pointers.ClassUtf8String)
+	{
+		return NewBSTR<CP_UTF8>(reinterpret_cast<Utf8StringOTE*>(oteString)->m_location->m_characters, oteString->getSize());
+	}
+	else if (oteClass->m_location->m_instanceSpec.m_nullTerminated)
+	{
+		// Assume it is an ANSI string
+		return NewBSTR<CP_ACP>(reinterpret_cast<StringOTE*>(oteString)->m_location->m_characters, oteString->getSize());
+	}
+	return nullptr;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -158,21 +170,7 @@ inline void Interpreter::push(LPCWSTR pStr)
 {
    	if (pStr)
 	{
-		int len = ::WideCharToMultiByte(
-					CP_ACP,	// code page 
-					0,		// performance and mapping flags 
-					pStr,	// address of wide-character string
-					-1,		// number of characters in string 
-					NULL,	// address of buffer for new string 
-					0,		// size of buffer 
-					NULL,	// address of default for unmappable characters  
-					NULL	// address of flag set when default char. used 
-				);
-		// N.B. Reported length includes the null terminator!
-		StringOTE* stringPointer = reinterpret_cast<StringOTE*>(ObjectMemory::newUninitializedByteObject(Pointers.ClassString, len-1));
-		String* string = stringPointer->m_location;
-		::WideCharToMultiByte(CP_ACP,0,pStr,-1,string->m_characters,len,NULL,NULL);
-		pushNewObject((OTE*)stringPointer);
+		pushNewObject((OTE*)ST::Utf16String::New(pStr));
 	}
 	else
 		pushNil();

@@ -52,7 +52,6 @@
   <Type Name="ST::String">
     <DisplayString Condition="(Oop)this == Pointers.Nil">nil</DisplayString>
     <DisplayString>{m_characters,s}</DisplayString>
-    <!--<StringView>{m_characters,sb}</StringView>-->
     <Expand HideRawView="true"></Expand>
   </Type>
   <Type Name="TOTE&lt;ST::Symbol&gt;">
@@ -67,7 +66,32 @@
     <DisplayString>#{m_characters,nasb}</DisplayString>
     <Expand HideRawView="true"></Expand>
   </Type>
-
+  <Type Name="TOTE&lt;ST::Utf16String&gt;">
+    <DisplayString Condition="(Oop)this == Pointers.Nil">nil</DisplayString>
+    <DisplayString Condition="m_flags.m_free">**a Freed Utf16String**</DisplayString>
+    <DisplayString Condition="!m_flags.m_free">{m_location,su} (size {m_size/2})</DisplayString>
+    <Expand HideRawView="true">
+      <ExpandedItem>m_location</ExpandedItem>
+    </Expand>
+  </Type>
+  <Type Name="ST::Utf16String">
+    <DisplayString Condition="(Oop)this == Pointers.Nil">nil</DisplayString>
+    <DisplayString >{m_characters,su}</DisplayString>
+    <Expand HideRawView="0"></Expand>
+  </Type>
+  <Type Name="TOTE&lt;ST::Utf8String&gt;">
+    <DisplayString Condition="(Oop)this == Pointers.Nil">nil</DisplayString>
+    <DisplayString Condition="m_flags.m_free">**a Freed Utf16String**</DisplayString>
+    <DisplayString Condition="!m_flags.m_free">{m_location,s8} (size {m_size})</DisplayString>
+    <Expand HideRawView="true">
+      <ExpandedItem>m_location</ExpandedItem>
+    </Expand>
+  </Type>
+  <Type Name="ST::Utf8String">
+    <DisplayString Condition="(Oop)this == Pointers.Nil">nil</DisplayString>
+    <DisplayString >{m_characters,s8}</DisplayString>
+    <Expand HideRawView="0"></Expand>
+  </Type>
   <!--Other scalar values-->
   <Type Name="TOTE&lt;ST::Float&gt;">
     <DisplayString Condition="(Oop)this == Pointers.Nil">nil</DisplayString>
@@ -292,7 +316,7 @@
   </Type>
   
   <!-- Generic OTEs -->
-  <Type Name="TOTE&lt;ST::Object&gt;" Inheritable="true">
+  <Type Name="TOTE&lt;*&gt;" Inheritable="true">
      <!-- SmallInteger -->
     <DisplayString Condition="((Oop)this)&amp;1">{(int)(((Oop)this)>>1),na} (SmallInteger)</DisplayString>
     <!-- Free'd object -->
@@ -303,6 +327,8 @@
     <DisplayString Condition="(Oop)this == Pointers.False">false</DisplayString>
     <!-- Common types with debug visualization -->
     <DisplayString Condition="m_oteClass == Pointers.ClassSymbol">{(TOTE&lt;ST::Symbol&gt;*)this,na}</DisplayString>
+    <DisplayString Condition="m_oteClass == Pointers.ClassUtf16String">{(TOTE&lt;ST::Utf16String&gt;*)this,na}</DisplayString>
+    <DisplayString Condition="m_oteClass == Pointers.ClassUtf8String">{(TOTE&lt;ST::Utf8String&gt;*)this,na}</DisplayString>
     <DisplayString Condition="m_oteClass == Pointers.ClassString">{(TOTE&lt;ST::String&gt;*)this,na}</DisplayString>
     <DisplayString Condition="m_oteClass == Pointers.ClassArray">{(TOTE&lt;ST::Array&gt;*)this,na}</DisplayString>
     <DisplayString Condition="m_oteClass == Pointers.ClassCompiledMethod">{(TOTE&lt;ST::CompiledMethod&gt;*)this,na}</DisplayString>
@@ -361,6 +387,8 @@
         ">(TOTE&lt;ST::VariantObject&gt;*)this</ExpandedItem>
       <!--Fallback expansion for all byte classes without a custom representation-->
       <ExpandedItem Condition="m_flags.m_free==0 &amp;&amp; m_flags.m_pointer==0
+        &amp;&amp; m_oteClass != Pointers.ClassUtf16String 
+        &amp;&amp; m_oteClass != Pointers.ClassUtf8String 
         &amp;&amp; m_oteClass != Pointers.ClassString 
         &amp;&amp; m_oteClass != Pointers.ClassSymbol
         &amp;&amp; m_oteClass != Pointers.ClassFloat

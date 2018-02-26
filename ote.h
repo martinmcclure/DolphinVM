@@ -15,6 +15,9 @@
 
 #define COUNTBITS	(sizeof(BYTE)*8)
 #define SPACEBITS	3
+#define NULLTERMTYPE WCHAR
+//#define NULLTERMTYPE char
+#define NULLTERMSIZE sizeof(NULLTERMTYPE)
 
 template <class T> class TOTE;
 
@@ -52,6 +55,7 @@ union OTEFlags
 		MarkMask = 1 << 2,
 		FinalizeMask = 1 << 3,
 		WeakOrZMask = 1 << 4,
+		SpaceMask = 0x7 << 5,
 	};
 	enum { WeakMask = (PointerMask | WeakOrZMask) };
 };
@@ -79,7 +83,7 @@ public:
 	__forceinline int sizeOf() const
 	{
 		// If we use getSize() here, it does not get inlined
-		return getSize() + isNullTerminated();
+		return getSize() + (isNullTerminated() * NULLTERMSIZE);
 	}
 
 	// The required size for this variable pointer object to accommodate the specified number of indexable fields
@@ -137,7 +141,7 @@ public:
 	__forceinline void beUnfinalizable()					{ m_dwFlags &= ~OTEFlags::FinalizeMask; }
 	__forceinline bool isWeak() const						{ return (m_dwFlags & OTEFlags::WeakMask) == OTEFlags::WeakMask; }
 	__forceinline bool isNullTerminated() const				{ return (m_dwFlags & OTEFlags::WeakMask) == OTEFlags::WeakOrZMask; }
-	__forceinline void beNullTerminated()					{ ASSERT(!isImmutable()); setNullTerminated(); m_size--; }
+	__forceinline void beNullTerminated()					{ ASSERT(!isImmutable()); setNullTerminated(); m_size -= NULLTERMSIZE; }
 	__forceinline void setNullTerminated()					{ m_dwFlags = (m_dwFlags & ~OTEFlags::PointerMask) | OTEFlags::WeakOrZMask; }
 
 	__forceinline bool isBehavior() const					{ return isMetaclass() || m_oteClass->isMetaclass(); }
